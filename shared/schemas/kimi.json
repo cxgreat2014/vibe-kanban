@@ -12,7 +12,7 @@
       "default": null
     },
     "model": {
-      "description": "Model to use (e.g., \"kimi-coding\", \"kimi-k2.5\", \"kimi-k2.6\")",
+      "description": "Model key from ~/.kimi/config.toml (e.g., \"kimi-code/kimi-for-coding\").\nIf not set, the default_model from config.toml is used.",
       "type": [
         "string",
         "null"

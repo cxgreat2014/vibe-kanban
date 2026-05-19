@@ -661,7 +661,8 @@ export type Droid = { append_prompt: AppendPrompt, autonomy: Autonomy, model?: s
 
 export type Kimi = { append_prompt: AppendPrompt, 
 /**
- * Model to use (e.g., "kimi-coding", "kimi-k2.5", "kimi-k2.6")
+ * Model key from ~/.kimi/config.toml (e.g., "kimi-code/kimi-for-coding").
+ * If not set, the default_model from config.toml is used.
  */
 model?: string | null, 
 /**

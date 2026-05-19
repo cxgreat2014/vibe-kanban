@@ -18,7 +18,7 @@ use crate::{
         StandardCodingAgentExecutor,
     },
     logs::utils::patch,
-    model_selector::{ModelInfo, ModelSelectorConfig, PermissionPolicy},
+    model_selector::{ModelSelectorConfig, PermissionPolicy},
     profile::ExecutorConfig,
 };
 
@@ -29,7 +29,8 @@ pub struct Kimi {
     #[serde(default)]
     pub append_prompt: AppendPrompt,
 
-    /// Model to use (e.g., "kimi-coding", "kimi-k2.5", "kimi-k2.6")
+    /// Model key from ~/.kimi/config.toml (e.g., "kimi-code/kimi-for-coding").
+    /// If not set, the default_model from config.toml is used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
 
@@ -217,27 +218,6 @@ impl StandardCodingAgentExecutor for Kimi {
     ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ExecutorError> {
         let options = ExecutorDiscoveredOptions {
             model_selector: ModelSelectorConfig {
-                models: vec![
-                    ModelInfo {
-                        id: "kimi-coding".to_string(),
-                        name: "Kimi Code".to_string(),
-                        provider_id: None,
-                        reasoning_options: vec![],
-                    },
-                    ModelInfo {
-                        id: "kimi-k2.5".to_string(),
-                        name: "Kimi K2.5".to_string(),
-                        provider_id: None,
-                        reasoning_options: vec![],
-                    },
-                    ModelInfo {
-                        id: "kimi-k2.6".to_string(),
-                        name: "Kimi K2.6".to_string(),
-                        provider_id: None,
-                        reasoning_options: vec![],
-                    },
-                ],
-                default_model: Some("kimi-coding".to_string()),
                 permissions: vec![PermissionPolicy::Auto, PermissionPolicy::Supervised],
                 ..Default::default()
             },
