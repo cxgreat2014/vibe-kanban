@@ -18,9 +18,94 @@ use crate::{
         StandardCodingAgentExecutor,
     },
     logs::utils::patch,
-    model_selector::{ModelSelectorConfig, PermissionPolicy},
+    model_selector::{ModelInfo, ModelSelectorConfig, PermissionPolicy, ReasoningOption},
     profile::ExecutorConfig,
 };
+
+/// Parsed model entry from ~/.kimi/config.toml
+#[derive(Debug, Clone)]
+struct ParsedModel {
+    key: String,
+    display_name: String,
+    supports_thinking: bool,
+}
+
+/// Parsed Kimi CLI configuration
+#[derive(Debug, Clone)]
+struct ParsedConfig {
+    default_model: Option<String>,
+    default_thinking: bool,
+    models: Vec<ParsedModel>,
+}
+
+impl Default for ParsedConfig {
+    fn default() -> Self {
+        Self {
+            default_model: None,
+            default_thinking: false,
+            models: Vec::new(),
+        }
+    }
+}
+
+fn parse_kimi_config() -> Result<ParsedConfig, ExecutorError> {
+    let config_path = dirs::home_dir()
+        .ok_or_else(|| ExecutorError::UnknownExecutorType("Home directory not found".into()))?
+        .join(".kimi")
+        .join("config.toml");
+
+    if !config_path.exists() {
+        return Ok(ParsedConfig::default());
+    }
+
+    let content = std::fs::read_to_string(&config_path).map_err(ExecutorError::Io)?;
+
+    let value: toml::Value = toml::from_str(&content).map_err(ExecutorError::TomlDeserialize)?;
+
+    let default_model = value
+        .get("default_model")
+        .and_then(toml::Value::as_str)
+        .map(String::from);
+
+    let default_thinking = value
+        .get("default_thinking")
+        .and_then(toml::Value::as_bool)
+        .unwrap_or(false);
+
+    let mut models = Vec::new();
+    if let Some(models_table) = value.get("models").and_then(toml::Value::as_table) {
+        for (model_key, model_value) in models_table {
+            if let Some(model_table) = model_value.as_table() {
+                let display_name = model_table
+                    .get("display_name")
+                    .and_then(toml::Value::as_str)
+                    .or_else(|| model_table.get("model").and_then(toml::Value::as_str))
+                    .unwrap_or(model_key)
+                    .to_string();
+
+                let capabilities: Vec<&str> = model_table
+                    .get("capabilities")
+                    .and_then(toml::Value::as_array)
+                    .map(|arr| arr.iter().filter_map(toml::Value::as_str).collect())
+                    .unwrap_or_default();
+
+                let supports_thinking = capabilities.contains(&"thinking");
+
+                models.push(ParsedModel {
+                    key: model_key.clone(),
+                    display_name,
+                    supports_thinking,
+                });
+            }
+        }
+    }
+
+    Ok(ParsedConfig {
+        default_model,
+        default_thinking,
+        models,
+    })
+}
 
 /// Kimi CLI executor configuration
 #[derive(Derivative, Clone, Serialize, Deserialize, TS, JsonSchema)]
@@ -33,6 +118,10 @@ pub struct Kimi {
     /// If not set, the default_model from config.toml is used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+
+    /// Enable thinking mode (appends ",thinking" to the model id sent to ACP).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<bool>,
 
     /// Agent type (e.g., "default", "okabe", or custom agent file)
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -75,6 +164,16 @@ impl Kimi {
 
         apply_overrides(builder, &self.cmd)
     }
+
+    fn resolve_model_id(&self) -> Option<String> {
+        self.model.as_ref().map(|model| {
+            if self.thinking.unwrap_or(false) {
+                format!("{model},thinking")
+            } else {
+                model.clone()
+            }
+        })
+    }
 }
 
 #[async_trait]
@@ -82,6 +181,9 @@ impl StandardCodingAgentExecutor for Kimi {
     fn apply_overrides(&mut self, executor_config: &ExecutorConfig) {
         if let Some(model_id) = &executor_config.model_id {
             self.model = Some(model_id.clone());
+        }
+        if let Some(reasoning_id) = &executor_config.reasoning_id {
+            self.thinking = Some(reasoning_id == "thinking");
         }
         if let Some(permission_policy) = executor_config.permission_policy.clone() {
             self.yolo = Some(matches!(
@@ -102,8 +204,8 @@ impl StandardCodingAgentExecutor for Kimi {
         env: &ExecutionEnv,
     ) -> Result<SpawnedChild, ExecutorError> {
         let mut harness = AcpAgentHarness::with_session_namespace("kimi_sessions");
-        if let Some(model) = &self.model {
-            harness = harness.with_model(model);
+        if let Some(model_id) = self.resolve_model_id() {
+            harness = harness.with_model(model_id);
         }
         let combined_prompt = self.append_prompt.combine_prompt(prompt);
         let kimi_command = self.build_command_builder()?.build_initial()?;
@@ -133,8 +235,8 @@ impl StandardCodingAgentExecutor for Kimi {
         env: &ExecutionEnv,
     ) -> Result<SpawnedChild, ExecutorError> {
         let mut harness = AcpAgentHarness::with_session_namespace("kimi_sessions");
-        if let Some(model) = &self.model {
-            harness = harness.with_model(model);
+        if let Some(model_id) = self.resolve_model_id() {
+            harness = harness.with_model(model_id);
         }
         let combined_prompt = self.append_prompt.combine_prompt(prompt);
         let kimi_command = self.build_command_builder()?.build_follow_up(&[])?;
@@ -206,7 +308,13 @@ impl StandardCodingAgentExecutor for Kimi {
             variant: None,
             model_id: self.model.clone(),
             agent_id: self.agent.clone(),
-            reasoning_id: None,
+            reasoning_id: self.thinking.and_then(|t| {
+                if t {
+                    Some("thinking".to_string())
+                } else {
+                    None
+                }
+            }),
             permission_policy: Some(permission_policy),
         }
     }
@@ -216,8 +324,35 @@ impl StandardCodingAgentExecutor for Kimi {
         _workdir: Option<&std::path::Path>,
         _repo_path: Option<&std::path::Path>,
     ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ExecutorError> {
+        let config = parse_kimi_config().unwrap_or_default();
+
+        let models: Vec<ModelInfo> = config
+            .models
+            .into_iter()
+            .map(|m| {
+                let reasoning_options = if m.supports_thinking {
+                    vec![ReasoningOption {
+                        id: "thinking".to_string(),
+                        label: "Thinking".to_string(),
+                        is_default: config.default_thinking,
+                    }]
+                } else {
+                    vec![]
+                };
+
+                ModelInfo {
+                    id: m.key,
+                    name: m.display_name,
+                    provider_id: None,
+                    reasoning_options,
+                }
+            })
+            .collect();
+
         let options = ExecutorDiscoveredOptions {
             model_selector: ModelSelectorConfig {
+                models,
+                default_model: config.default_model,
                 permissions: vec![PermissionPolicy::Auto, PermissionPolicy::Supervised],
                 ..Default::default()
             },
@@ -239,6 +374,7 @@ mod tests {
         let kimi = Kimi {
             append_prompt: AppendPrompt::default(),
             model: None,
+            thinking: None,
             agent: None,
             skills: None,
             agent_file: None,
@@ -259,6 +395,7 @@ mod tests {
         let kimi = Kimi {
             append_prompt: AppendPrompt::default(),
             model: None,
+            thinking: None,
             agent: None,
             skills: None,
             agent_file: None,
@@ -269,5 +406,48 @@ mod tests {
         let path = kimi.default_mcp_config_path();
         assert!(path.is_some());
         assert!(path.unwrap().to_string_lossy().contains(".kimi/mcp.json"));
+    }
+
+    #[test]
+    fn test_kimi_parse_config() {
+        let config = parse_kimi_config();
+        // If the user has a valid config, we should get at least the default model
+        if let Ok(cfg) = config {
+            // The test machine has kimi installed, so we expect a config
+            if !cfg.models.is_empty() {
+                assert!(
+                    cfg.default_model.is_some(),
+                    "default_model should be present when models exist"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_kimi_resolve_model_id() {
+        let kimi = Kimi {
+            append_prompt: AppendPrompt::default(),
+            model: Some("kimi-code/kimi-for-coding".to_string()),
+            thinking: Some(true),
+            agent: None,
+            skills: None,
+            agent_file: None,
+            yolo: None,
+            cmd: CmdOverrides::default(),
+            approvals: None,
+        };
+        assert_eq!(
+            kimi.resolve_model_id(),
+            Some("kimi-code/kimi-for-coding,thinking".to_string())
+        );
+
+        let kimi_no_thinking = Kimi {
+            thinking: Some(false),
+            ..kimi
+        };
+        assert_eq!(
+            kimi_no_thinking.resolve_model_id(),
+            Some("kimi-code/kimi-for-coding".to_string())
+        );
     }
 }

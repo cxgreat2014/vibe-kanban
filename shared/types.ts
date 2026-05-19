@@ -666,6 +666,10 @@ export type Kimi = { append_prompt: AppendPrompt,
  */
 model?: string | null, 
 /**
+ * Enable thinking mode (appends ",thinking" to the model id sent to ACP).
+ */
+thinking?: boolean | null, 
+/**
  * Agent type (e.g., "default", "okabe", or custom agent file)
  */
 agent?: string | null, 

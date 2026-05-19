@@ -18,6 +18,13 @@
         "null"
       ]
     },
+    "thinking": {
+      "description": "Enable thinking mode (appends \",thinking\" to the model id sent to ACP).",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
     "agent": {
       "description": "Agent type (e.g., \"default\", \"okabe\", or custom agent file)",
       "type": [
