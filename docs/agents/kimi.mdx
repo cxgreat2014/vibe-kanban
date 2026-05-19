@@ -1,0 +1,27 @@
+---
+title: "Kimi CLI"
+description: "Set up Moonshot AI's Kimi CLI"
+icon: https://www.vibekanban.com/images/logos/kimi-logo.svg
+---
+
+<Steps>
+<Step title="Install Kimi CLI">
+  ```bash
+  uv tool install --python 3.13 kimi-cli
+  ```
+</Step>
+
+<Step title="Follow the login instructions">
+  Run `kimi auth login` and complete the authentication flow as prompted. For more details, see the [official Kimi documentation](https://github.com/MoonshotAI/kimi-cli).
+</Step>
+
+<Step title="Start Vibe Kanban">
+  Once authenticated, launch Vibe Kanban:
+
+  ```bash
+  npx vibe-kanban
+  ```
+
+  You can now select Kimi CLI when creating task attempts.
+</Step>
+</Steps>
